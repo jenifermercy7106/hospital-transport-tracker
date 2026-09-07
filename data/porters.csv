@@ -1,0 +1,9 @@
+porter_id,name,home_zone,shift_start_hour,shift_end_hour
+P01,Porter 1,1,7,21
+P02,Porter 2,1,7,21
+P03,Porter 3,3,7,21
+P04,Porter 4,2,7,21
+P05,Porter 5,2,7,21
+P06,Porter 6,2,7,21
+P07,Porter 7,1,7,21
+P08,Porter 8,5,7,21

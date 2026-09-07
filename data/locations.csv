@@ -1,0 +1,21 @@
+location,zone
+Ward A1 (General Surgery),1
+Ward A2 (General Surgery),1
+Ward B1 (Orthopedics),1
+Ward B2 (Orthopedics),1
+Ward C1 (Cardiology),2
+Ward C2 (Cardiology),2
+Ward D1 (Oncology),2
+Ward D2 (Oncology),2
+ICU,3
+NICU,3
+Emergency Department,3
+Radiology - CT,4
+Radiology - MRI,4
+Radiology - X-Ray,4
+OT Complex - Theatre 1,5
+OT Complex - Theatre 2,5
+OT Complex - Theatre 3,5
+Recovery / PACU,5
+Dialysis Unit,2
+Discharge Lounge,1
