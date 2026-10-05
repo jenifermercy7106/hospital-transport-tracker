@@ -13,7 +13,9 @@ Run: python3 scripts/edge_cases.py
 """
 
 import pandas as pd
-from prototype_engine import validate_requests, simulate_queue, detect_sla_state
+from prototype_engine import (
+    validate_requests, simulate_queue, simulate_queue_with_reserve, detect_sla_state,
+)
 
 PASS, FAIL = "PASS", "FAIL"
 results = []
@@ -162,6 +164,50 @@ check(
     "EC6 - Empty porter roster results in escalation, not a fabricated assignment",
     bool(sim6.loc[0, "prototype_escalated_for_review"]) and pd.isna(sim6.loc[0, "prototype_assigned_porter"]),
     f"assigned={sim6.loc[0,'prototype_assigned_porter']}, escalated={sim6.loc[0,'prototype_escalated_for_review']}",
+)
+
+
+# ---------------------------------------------------------------------------
+# Edge case 7 (Review 2): reserved Emergency porter pool itself gets
+# overwhelmed -- a burst of Emergency calls exceeds even the dedicated
+# reserve. The engine must overflow into the general pool rather than
+# queue an Emergency request behind an idle-but-"not allowed" porter.
+# ---------------------------------------------------------------------------
+reserve_surge_rows = [
+    base_row(request_id=f"RSURGE{i}", urgency="Emergency",
+             timestamp_requested="2026-08-24 09:00:00")
+    for i in range(4)
+]
+df7 = pd.DataFrame(reserve_surge_rows)
+sim7 = simulate_queue_with_reserve(df7, porters, reserved_porter_ids={"P01"})
+check(
+    "EC7 - Reserve-pool surge (4 Emergencies, 1 reserved porter): engine completes without error",
+    len(sim7) == 4,
+    f"{len(sim7)} rows returned",
+)
+check(
+    "EC7 - Reserve-pool overflow uses the general pool rather than leaving requests unassigned",
+    sim7["prototype_assigned_porter"].notna().all(),
+    sim7[["request_id", "prototype_pool_used", "prototype_assigned_porter"]].to_dict("records"),
+)
+
+# ---------------------------------------------------------------------------
+# Edge case 8 (Review 2): reserved porter ID doesn't actually exist in the
+# roster (a config/typo error -- e.g. a porter ID retired or mistyped in
+# the reservation list). Must degrade to "no reserve", not crash or
+# silently drop every Emergency request.
+# ---------------------------------------------------------------------------
+df8 = pd.DataFrame([base_row(request_id="BADCONFIG", urgency="Emergency")])
+sim8 = simulate_queue_with_reserve(df8, porters, reserved_porter_ids={"P99-DOES-NOT-EXIST"})
+check(
+    "EC8 - Non-existent reserved porter ID does not crash the engine",
+    len(sim8) == 1,
+    "engine returned a row",
+)
+check(
+    "EC8 - Non-existent reserved porter ID falls back to the general pool instead of failing",
+    pd.notna(sim8.loc[0, "prototype_assigned_porter"]),
+    f"assigned={sim8.loc[0, 'prototype_assigned_porter']}",
 )
 
 

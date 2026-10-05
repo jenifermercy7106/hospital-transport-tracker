@@ -86,6 +86,26 @@ st.sidebar.caption(
 )
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("🕒 Demo clock")
+st.sidebar.caption(
+    "The sample dataset is historical (24–30 Aug 2026). In a real deployment "
+    "this app would just use the real current time; for this demo, pick a "
+    "point inside the dataset's week so SLA/waiting-time colours are meaningful "
+    "instead of showing everything as breached against today's real clock."
+)
+use_real_clock = st.sidebar.checkbox("Use real current time instead", value=False)
+if use_real_clock:
+    demo_now = pd.Timestamp.now()
+else:
+    sim_date = st.sidebar.date_input(
+        "Simulated date", value=pd.Timestamp("2026-08-28").date(),
+        min_value=pd.Timestamp("2026-08-24").date(), max_value=pd.Timestamp("2026-08-30").date(),
+    )
+    sim_time = st.sidebar.slider("Simulated time of day (hour)", 0, 23, 14)
+    demo_now = pd.Timestamp(sim_date) + pd.Timedelta(hours=sim_time)
+st.sidebar.caption(f"Tracker is showing the queue as it stood at: **{demo_now}**")
+
+st.sidebar.markdown("---")
 st.sidebar.subheader("📞 Log a new transport request")
 with st.sidebar.form("new_request_form", clear_on_submit=True):
     patient_id = st.text_input("Patient ID", value="")
@@ -101,7 +121,7 @@ with st.sidebar.form("new_request_form", clear_on_submit=True):
         new_row = {
             "request_id": new_id, "patient_id": patient_id or "UNKNOWN",
             "department": staff_role, "reason": reason,
-            "timestamp_requested": pd.Timestamp.now(),
+            "timestamp_requested": demo_now,
             "source_location": source, "destination_location": destination,
             "urgency": urgency, "requested_by": f"{staff_name} ({staff_role})",
             "porter_id": "", "timestamp_assigned": "", "timestamp_arrived_source": "",
@@ -134,7 +154,7 @@ st.caption(
 df = st.session_state.requests
 open_df = df[df["live_status"] == "Open"].copy()
 
-now = pd.Timestamp.now()
+now = demo_now
 # use the historical requested time as-is for demo realism (data is dated in the past)
 open_df["waiting_minutes"] = (now - open_df["timestamp_requested"]).dt.total_seconds() / 60.0
 open_df["waiting_minutes"] = open_df["waiting_minutes"].clip(lower=0)

@@ -34,7 +34,8 @@ def run_baseline(df: pd.DataFrame) -> pd.DataFrame:
     out["timestamp_requested"] = pd.to_datetime(out["timestamp_requested"], errors="coerce")
 
     # Baseline has no urgency-aware sorting -> pure arrival order per day
-    out = out.sort_values("timestamp_requested").reset_index(drop=True)
+    # (stable sort so same-minute duplicate calls keep a reproducible order)
+    out = out.sort_values("timestamp_requested", kind="stable").reset_index(drop=True)
 
     # Baseline naive queue-wait model: every request waits behind every
     # earlier-arriving request that is still "in service" on the SAME porter

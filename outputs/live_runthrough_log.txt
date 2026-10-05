@@ -1,0 +1,44 @@
+==============================================================================
+LIVE RUN-THROUGH -- Hospital Transport Request Tracker
+Exercising the exact engine calls app.py's UI buttons invoke.
+==============================================================================
+
+[Step 1] Staff console opens. Loading live queue...
+  Porter roster loaded: 8 porters on shift.
+  Logged in as: A. Kumar (Ward Sister)
+
+[Step 2] A ward nurse phones in a new transport request.
+  Staff types what they heard: source='ward a1' (typo'd free text),
+  destination='ICU', urgency left BLANK (caller didn't say / staff forgot to ask).
+  -> request LIVE0001 logged. Engine resolved source to 'Ward A1 (General Surgery)', urgency defaulted to 'Urgent' (safe default, never Routine).
+  -> data_confidence = Medium
+  -> data_issues: source location auto-corrected from free text; urgency not specified on call — defaulted to Urgent pending clinician review
+
+[Step 3] Engine produces a RECOMMENDATION. Nothing finalised yet.
+  priority_score = 63.0  (base for 'Urgent' + aging + low-confidence visibility boost)
+  Suggested porter: P01  (Nearest available porter (zone distance 0))
+  Confidence badge shown to staff: Medium
+
+[Step 4] Staff reviews the recommendation. The ward sister knows P01 is
+  already walking a patient to X-Ray, so she OVERRIDES the suggestion
+  (P01) and picks P03 instead, then clicks 'Confirm assignment'.
+  -> FINAL ACTION taken by A. Kumar (Ward Sister): porter P03 assigned.
+     This write only happens because of the staff button click above --
+     recommend_porter() itself never assigns anything.
+
+[Step 5] Porter P03 arrives with the patient at ICU. Staff clicks
+  'Confirm handover' to close out the transfer.
+  -> FINAL ACTION taken by A. Kumar (Ward Sister): handover confirmed.
+
+[Step 6] Staff action log (audit trail) for this session:
+          timestamp staff_name  staff_role                  action request_id                                detail
+2026-10-05 04:45:01   A. Kumar Ward Sister      Logged new request   LIVE0001 ward a1 -> ICU, urgency=(unspecified)
+2026-10-05 04:45:01   A. Kumar Ward Sister Overrode recommendation   LIVE0001          porter=P03 (recommended=P01)
+2026-10-05 04:45:01   A. Kumar Ward Sister      Confirmed handover   LIVE0001                            porter=P03
+
+==============================================================================
+RESULT: every write to request LIVE0001's state (assignment, handover)
+was triggered by a named, logged staff action, never by the engine on
+its own. The engine's job throughout was recommend + flag uncertainty,
+not decide. 2/2 final actions correctly attributed to a staff member.
+==============================================================================

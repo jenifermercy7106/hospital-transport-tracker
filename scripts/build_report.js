@@ -93,14 +93,26 @@ const doc = new Document({
       new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 800 },
         children: [new TextRun({ text: new Date().toLocaleDateString("en-IN", { year: "numeric", month: "long", day: "numeric" }), size: 22 })] }),
       new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 40 },
+        children: [new TextRun({ text: "Review 2 — Revised Edition", bold: true, size: 22, color: "2E5B4E" })] }),
+      new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 40 },
         children: [new TextRun({ text: "Deliverables in this package:", bold: true, size: 22 })] }),
       bullet("Synthetic dataset — transport requests, patient locations, priority, porter availability, completion timestamps"),
       bullet("Baseline method (baseline.py) — naive FIFO queue, no urgency/location awareness"),
       bullet("Working prototype — decision engine (prototype_engine.py) + interactive Streamlit tracker (app.py)"),
-      bullet("Six implemented edge/failure-case tests (edge_cases.py)"),
+      bullet("Eight implemented edge/failure-case tests, 14/14 assertions passing (edge_cases.py)"),
       bullet("Measurable experiment comparing baseline vs prototype vs target (experiment.py)"),
+      bullet("Review 2: a reserved-porter mitigation experiment with trade-off and error analysis (experiment_mitigation.py)"),
+      bullet("Review 2: a scripted end-to-end live run-through of the tracker's full staff workflow (live_runthrough.py)"),
       bullet("This report — scenario, method, results, stakeholder validation, ethics, deployment checklist"),
       new Paragraph({ children: [new PageBreak()] }),
+
+      // ---------------- 0. REVISION NOTES ----------------
+      H1("0. Revision Notes — What Changed for Review 2"),
+      P("Review 1 closed with four named next steps. This revision addresses the first three directly and is explicit about the fourth remaining as planned future work, rather than claiming it is done:"),
+      bullet("Live run-through of the tracker. Addressed — Section 4 now includes a scripted, reproducible end-to-end session (live_runthrough.py) that drives the exact engine calls app.py's buttons use, through logging a messy request, reviewing a recommendation, confirming an override, and confirming a handover. The sandbox this project was built in has no internet access, so a real browser session of Streamlit could not be captured here (verified: pip install streamlit fails with no matching distribution). Jeni should still run streamlit run app.py locally — she has Python/Anaconda installed — to capture the actual on-screen walkthrough for a live demo; this script proves the underlying logic is correct and ready for that."),
+      bullet("Mitigation experiment for the Emergency SLA gap. Addressed — Section 6.7 tests the proposed reserved-porter-pool idea directly, with a genuinely useful (and initially counter-intuitive) result: the straightforward version of this idea makes Emergency performance worse, not better, and the section explains why and what a better next step would look like."),
+      bullet("A bug found and fixed while building the above. While cross-checking the mitigation engine against the original Review 1 engine for an exact baseline comparison, an inconsistency was found in how simulate_queue() handled an unresolved source location: it picked a porter as if the job were in a default zone, but then charged zero travel distance for that same job. This has been fixed (Section 6.1 numbers below reflect the corrected engine); the direction and shape of every Review 1 conclusion is unchanged, but the exact Emergency miss-rate figure shifts from 42.5% to 43.7% as a result. This is reported here rather than quietly — the whole point of Section 5's edge-case tests and this fix is that the system should fail visibly, including to its own author."),
+      bullet("Real user validation with live hospital staff and a shared multi-user backend. Not done, by design — both require resources outside a course project's scope (real ward access; a shared database deployment). Both remain explicitly listed in Section 9's deployment checklist as prerequisites before any pilot, not silently dropped."),
 
       // ---------------- 1. SCENARIO DEFINITION ----------------
       H1("1. Scenario Definition"),
@@ -164,11 +176,23 @@ const doc = new Document({
       bullet("When the porter and patient reach the destination, the receiving unit's staff click Confirm handover — this is the moment the transfer is actually recorded as complete, closing the loop that phone calls never reliably closed."),
       bullet("At any point, a staff member can reassign/escalate a stuck request or cancel a duplicate/erroneous one; both actions are logged."),
       bullet("A staff-facing action log and a completed/cancelled log are available for shift handover and audit, addressing the accountability gap of the phone-call system."),
-      P("Note on this deliverable: the sandbox used to prepare this package has no network access to install and screenshot a live Streamlit server, so app.py is provided as complete, syntax-checked, ready-to-run code that reuses the same engine functions validated by the automated tests in Section 5. Running it locally only requires: pip install streamlit pandas, then streamlit run app.py from the project folder — consistent with the lightweight Python/Streamlit workflow already used for other data-facing tools in this portfolio."),
+      H2("4.1 Demo clock (added in Review 2)"),
+      P("The sample dataset is historical (24–30 August 2026). Early testing of the live tracker surfaced a genuine usability bug: comparing that historical data against the real wall-clock date made every single request appear as \"Breached\", since months had passed since the data was generated — a misleading demo, not a reflection of the engine's actual SLA logic. app.py now includes a sidebar \"Demo clock\" control that lets a reviewer pick a simulated point in time inside the dataset's week (default: 28 Aug, 14:00), so the colour-coded SLA states shown are meaningful; a checkbox switches to the real current time for when this moves to a live, non-historical deployment. Re-running the queue view at the new default clock shows a believable mix of 97 Breached / 64 On-Track requests out of 161 open, instead of 161/161 Breached."),
+      H2("4.2 Live run-through (Review 2)"),
+      P("live_runthrough.py performs a scripted end-to-end session that calls the exact same functions app.py's UI buttons call (validate_requests, score_priority, recommend_porter), in the same order a staff member's clicks would: a new, deliberately messy request is logged (typo'd source location, no urgency stated) \u2192 the engine returns a priority score, a recommended porter, and a confidence flag \u2192 a staff member deliberately overrides the recommendation \u2192 the staff member confirms the handover. The resulting action log (reproduced below) shows every state-changing action attributed to a named staff member, never to the engine itself:"),
+      ...[
+        "2026-10-05 04:23:52  A. Kumar  Ward Sister  Logged new request       LIVE0001  ward a1 -> ICU, urgency=(unspecified)",
+        "2026-10-05 04:23:52  A. Kumar  Ward Sister  Overrode recommendation  LIVE0001  porter=P03 (recommended=P01)",
+        "2026-10-05 04:23:53  A. Kumar  Ward Sister  Confirmed handover       LIVE0001  porter=P03",
+      ].map((line, i, arr) => new Paragraph({
+        spacing: { after: i === arr.length - 1 ? 160 : 20 },
+        children: [new TextRun({ text: line, font: "Courier New", size: 16 })],
+      })),
+      P("The full transcript, including the engine's intermediate reasoning (resolved location, data-confidence flag, priority score, recommendation reason) at each step, is saved to outputs/live_runthrough_log.txt and is reproducible by running python3 scripts/live_runthrough.py. As noted in Section 0, this validates the logic end-to-end but is not a substitute for Jeni clicking through the actual rendered page locally, which she is able to do outside this sandbox."),
 
       // ---------------- 5. EDGE-CASE TESTS ----------------
       H1("5. Edge-Case and Failure-State Tests"),
-      P("Six realistic failure states were implemented as automated checks in edge_cases.py (all currently passing, 10/10 assertions). Each test feeds the engine deliberately broken input and checks that the system degrades safely — it must never crash, never silently drop a request, and never finalise an action without staff confirmation."),
+      P("Eight realistic failure states are implemented as automated checks in edge_cases.py (all currently passing, 14/14 assertions — 6 states from Review 1, plus 2 added in Review 2 to cover the new reserved-porter-pool feature introduced in Section 6.7). Each test feeds the engine deliberately broken input and checks that the system degrades safely — it must never crash, never silently drop a request, and never finalise an action without staff confirmation."),
     ]
       .concat([
         makeTable(
@@ -180,8 +204,10 @@ const doc = new Document({
             ["4", "Clock-skew: handover confirmed before arrival (bad manual entry)", "Flagged Unknown-BadTimestamps, never a negative duration", "PASS"],
             ["5", "Surge: 5 simultaneous Emergencies vs 2 available porters", "Completes without error; over-capacity requests escalated, not silently queued", "PASS"],
             ["6", "Total infrastructure failure: empty porter roster", "No crash; every request escalated, no fabricated assignment", "PASS"],
+            ["7 (R2)", "Reserved Emergency pool itself overwhelmed (4 Emergencies, 1 reserved porter)", "Overflows into the general pool rather than leaving a request unassigned", "PASS"],
+            ["8 (R2)", "Reserved porter ID doesn't exist in the roster (config typo)", "Falls back to the general pool instead of crashing or dropping all Emergencies", "PASS"],
           ],
-          [700, 4200, 4600, 1500]
+          [900, 4000, 4600, 1500]
         ),
       ])
       .concat([
@@ -208,7 +234,7 @@ const doc = new Document({
         makeTable(
           ["Urgency", "n", "Baseline\n% missed/late", "Prototype\n% missed/late", "Target\n% missed/late", "Improvement\n(pct points)", "Meets\ntarget?"],
           [
-            ["Emergency", "87", "100.0%", "42.5%", "5.0%", "+57.5", "No — see 6.5"],
+            ["Emergency", "87", "100.0%", "43.7%", "5.0%", "+56.3", "No — see 6.5"],
             ["Urgent", "207", "9.2%", "0.0%", "10.0%", "+9.2", "Yes"],
             ["Routine", "333", "0.0%", "0.0%", "15.0%", "+0.0*", "Yes"],
           ],
@@ -218,7 +244,7 @@ const doc = new Document({
       .concat([
         new Paragraph({ spacing: { before: 100, after: 120 },
           children: [new TextRun({ text: "*Routine already meets target under both policies at this load; the improvement shows up as headroom, not a visible percentage-point gain.", italics: true, size: 20 })] }),
-        P("Weighted across all 627 requests with a resolved urgency, overall missed/late rate falls from 16.9% (baseline) to 5.9% (prototype) — an 11.0 percentage-point improvement from coordination logic alone, using identical demand and an identical porter roster."),
+        P("Weighted across all 662 requests with a resolved urgency, overall missed/late rate falls from 16.9% (baseline) to 6.1% (prototype) — a 10.8 percentage-point improvement from coordination logic alone, using identical demand and an identical porter roster."),
       ])
       .concat(image("outputs/chart_missed_by_urgency.png", 500, 321,
         "Figure 2. Missed/late transfer rate by urgency: baseline (red) vs prototype (green). The prototype's largest gain is exactly where it matters most — Emergency transfers."))
@@ -230,15 +256,38 @@ const doc = new Document({
       .concat([
         P("65 of 662 requests (9.8%) had missing or unrecognisable location data — a realistic rate for phone-logged, free-text intake. 100% of these Low-confidence requests were automatically escalated for staff review rather than silently guessed at or dropped, directly answering the brief's requirement to show how uncertainty is communicated to authorised staff."),
         H2("6.5 Error analysis — where the prototype still falls short"),
-        P("Honesty about remaining failure is part of this deliverable. 37 of 87 Emergency requests (42.5%) were still classified Completed-Late by the prototype, missing the 5% target. Root-cause analysis of these 37 cases:"),
+        P("Honesty about remaining failure is part of this deliverable. 38 of 87 Emergency requests (43.7%) were still classified Completed-Late by the prototype, missing the 5% target. Root-cause analysis of these 38 cases:"),
         bullet("The Emergency SLA (10 minutes, matching real hospital rapid-response expectations) is tight relative to physical travel distance in this hospital layout: a transfer spanning the maximum zone distance (e.g. a ward to the OT complex) costs roughly 6 + 4×2.5 = 16 minutes of service time alone under the prototype's zone-distance model — before any queueing wait is added. No allocation logic can make a porter walk faster than physics allows."),
         bullet("This is a genuine, non-cosmetic limitation of a coordination-logic-only fix: reassigning porters more intelligently reduces queueing delay to near zero (see Figure 2's Urgent/Routine columns), but it cannot eliminate a service time that is structurally longer than the SLA."),
-        bullet("The implication for the hospital, not just the software, is that Emergency-tier transfers likely need a dedicated, pre-positioned porter reserve near high-emergency zones (ICU, ED, OT complex) rather than relying solely on smarter queueing of the existing shared pool. This is exactly the kind of insight a working prototype and a measurable experiment surface, and a concept slide would not."),
+        bullet("Review 1 hypothesised that the hospital, not just the software, likely needs a dedicated, pre-positioned porter reserve near high-emergency zones. Section 6.7 tests that hypothesis directly against the same dataset and finds it is more subtle than it first appears — a straightforward reserve makes things worse, not better, for the reason explained there."),
         H2("6.6 Baseline vs Prototype: why the chosen approach is appropriate"),
         P("A rule-based priority queue with zone-aware recommendation (rather than, say, a machine-learned dispatch model) was chosen deliberately for this problem, for three reasons:"),
         bullet("Explainability under clinical accountability constraints — every recommendation traces to a readable reason (\"nearest available porter, zone distance 1\"; \"urgency=Emergency, waited 6 min\"). Staff who are legally and professionally responsible for the transfer need to understand why a suggestion was made, not just trust an opaque score."),
         bullet("No training data requirement — a learned model would need months of clean historical dispatch data this hospital does not yet have (its current system is phone calls). The rule-based approach works from day one and can be tuned as real data accumulates."),
         bullet("Fail-visible behaviour under missing/bad data — Section 5's edge cases show the rule-based engine degrades to explicit escalation under bad input; a black-box model would more likely produce a confident-looking but wrong recommendation on the same messy input, which is a worse failure mode in a clinical setting."),
+        H2("6.7 Mitigation Experiment (Review 2): Reserved Emergency Porter Pool"),
+        P("Hypothesis, from Section 6.5: dedicating one or two porters exclusively to Emergency-tier requests (a real \"STAT porter\" pattern some hospitals use) should close most of the remaining Emergency SLA gap, at some cost to Urgent/Routine wait times. This was implemented as simulate_queue_with_reserve() and tested against the identical 662-request stream used throughout Section 6, in three configurations: 0 reserved porters (the Section 6 prototype, unchanged), 1 reserved porter (P03, the zone with the lowest average distance to all other zones), and 2 reserved porters (P03 + P08, covering the two zones that together produce 37% of Emergency calls). An Emergency request only draws from the reserved pool if its wait there would stay under 5 minutes; otherwise it overflows into the general pool, so an empty reservation is never allowed to delay a live Emergency case."),
+      ])
+      .concat([
+        makeTable(
+          ["Configuration", "Urgency", "% missed/late", "vs target", "Meets target?"],
+          [
+            ["0 reserved (baseline)", "Emergency", "43.7%", "5.0%", "No"],
+            ["0 reserved (baseline)", "Urgent / Routine", "0.0% / 0.0%", "10.0% / 15.0%", "Yes / Yes"],
+            ["1 reserved (P03)", "Emergency", "50.6%", "5.0%", "No — worse"],
+            ["1 reserved (P03)", "Urgent / Routine", "0.0% / 0.0%", "10.0% / 15.0%", "Yes / Yes"],
+            ["2 reserved (P03+P08)", "Emergency", "48.3%", "5.0%", "No — worse"],
+            ["2 reserved (P03+P08)", "Urgent / Routine", "0.0% / 0.0%", "10.0% / 15.0%", "Yes / Yes"],
+          ],
+          [2600, 2200, 1800, 1800, 1900]
+        ),
+      ])
+      .concat(image("outputs/chart_mitigation_tradeoff.png", 460, 288,
+        "Figure 4. Reserving porters for Emergency-only use did not reduce Emergency misses in this dataset — it increased them, while leaving the already-passing Urgent/Routine tiers unchanged."))
+      .concat([
+        P("The result is counter-intuitive and is reported as found, not adjusted to fit the hypothesis: reserving porters made Emergency performance worse (43.7% -> 50.6% missed/late with 1 reserved porter), not better, while Urgent and Routine were completely unaffected (they were already at 0% and had headroom to spare). Tracing individual requests (prototype_pool_used column) explains why: with only 87 Emergency calls spread across a full week, concentrating them onto 1-2 specific porters creates queueing for Emergency itself whenever two calls land close together — a situation the unrestricted 8-porter pool simply absorbed by sending the second call to any other free porter. Reservation does not add capacity; it removes flexibility, and with this demand pattern the flexibility was doing more work than the dedicated-porter idea assumed."),
+        P("As a sanity check on whether this is a staffing (capacity) problem rather than an allocation (policy) problem, the same stream was re-run with 1 and 2 extra generalist porters added to the shared pool instead of reserving existing ones: Emergency missed/late fell to 36.8% with +1 porter and 37.9% with +2 — a real improvement, but still well short of the 5% target. This supports Review 1's original diagnosis in Section 6.5: part of the remaining gap is a hard physical-travel-time constraint against an aggressive 10-minute SLA, not something any queueing or staffing policy alone can fully close."),
+        P("Conclusion for this experiment: the mitigation was tested, not assumed, and the straightforward version of it should be rejected as stated. A more promising next step — out of scope for this revision but recorded for future work — would be a demand-aware reserve that only activates during a detected Emergency cluster (two or more Emergency calls within a short window) rather than a permanent, always-on reservation, combined with clinical sign-off on whether the 10-minute Emergency SLA is realistic for the hospital's actual physical layout."),
       ])
       .concat([
       // ---------------- 7. STAKEHOLDER VALIDATION ----------------
@@ -300,10 +349,11 @@ const doc = new Document({
       bullet("A staff training/onboarding pass so ward nurses, OT coordinators and porters all understand that the system recommends and they confirm — avoiding both under-trust (ignoring good recommendations) and over-trust (rubber-stamping without checking)."),
       bullet("A fallback procedure for when the system itself is unavailable (network outage, server down) — the phone-call process should remain as a documented backup, not be fully decommissioned on day one."),
       bullet("A pilot period on a single ward cluster with a defined success metric (e.g. this report's target: <10% missed/late for Urgent, <5% for Emergency) before hospital-wide rollout."),
+      bullet("If a reserved-porter policy for Emergency transfers is considered operationally, pilot it against real demand clustering data first — Section 6.7 found that a naively-sized, always-on reservation can make Emergency performance worse, not better. A demand-aware variant (reserve activates only during a detected multi-Emergency cluster) should be modelled and tested before committing shift rosters to it."),
       H2("Governance"),
       bullet("A data-retention and access policy for the action log, since it contains staff names tied to specific patient transfers."),
       bullet("A periodic review process to re-tune the priority scoring and zone map as the hospital's layout or department mix changes."),
-      bullet("Section 6.5's finding — that Emergency SLA breaches are partly a staffing/positioning problem, not purely a software problem — should be escalated to hospital operations leadership alongside the software rollout, not treated as solved by the software alone."),
+      bullet("Section 6.5 and 6.7's findings — that the remaining Emergency SLA gap is partly a staffing/capacity and physical-travel-time problem, not purely a software allocation problem — should be escalated to hospital operations leadership alongside the software rollout, not treated as solved by the software alone."),
 
       new Paragraph({ spacing: { before: 300 } }),
       P("— End of report —", { italics: true }),

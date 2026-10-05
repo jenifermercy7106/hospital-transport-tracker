@@ -219,7 +219,11 @@ def detect_sla_state(ts_requested, ts_handover_confirmed, ts_arrived_source, sla
 def simulate_queue(df: pd.DataFrame, porters_df: pd.DataFrame) -> pd.DataFrame:
     df = validate_requests(df)
     df["timestamp_requested"] = pd.to_datetime(df["timestamp_requested"], errors="coerce")
-    df = df.sort_values("timestamp_requested").reset_index(drop=True)
+    # stable sort: two requests logged in the SAME minute (a documented
+    # real-world failure mode -- duplicate/overlapping phone calls) must
+    # keep a deterministic, reproducible order every run, not whatever
+    # order the sort algorithm happens to pick that pass.
+    df = df.sort_values("timestamp_requested", kind="stable").reset_index(drop=True)
 
     porters_status = {
         row["porter_id"]: {"zone": row["home_zone"], "available_at": pd.Timestamp.min}
@@ -238,9 +242,17 @@ def simulate_queue(df: pd.DataFrame, porters_df: pd.DataFrame) -> pd.DataFrame:
             continue
 
         src_zone = ZONE.get(row["resolved_source"])
+        # REVIEW 2 FIX: an unresolved source location used to fall back to
+        # zone 3 when CHOOSING a porter, but to the chosen porter's own zone
+        # (giving a free 0-distance trip) when CHARGING travel time for that
+        # same job -- an internal inconsistency found while building the
+        # Review 2 reserve-pool experiment harness and cross-checking its
+        # output against this function. Use one consistent fallback zone for
+        # both steps so an unresolved location is never silently "free".
+        effective_zone = src_zone if src_zone is not None else 3
         sla = URGENCY_SLA_MIN.get(row["resolved_urgency"], 30)
 
-        porter_id, _ = recommend_porter(src_zone if src_zone is not None else 3, porters_status)
+        porter_id, _ = recommend_porter(effective_zone, porters_status)
 
         if porter_id is None:
             wait_minutes.append(None)
@@ -253,7 +265,7 @@ def simulate_queue(df: pd.DataFrame, porters_df: pd.DataFrame) -> pd.DataFrame:
         start = max(arrival, info["available_at"])
         wait = (start - arrival).total_seconds() / 60.0
 
-        dist = abs(info["zone"] - (src_zone if src_zone is not None else info["zone"]))
+        dist = abs(info["zone"] - effective_zone)
         service_time = 6 + dist * 2.5   # zone-aware -> shorter than baseline's flat 18 min average
         finish = start + pd.Timedelta(minutes=service_time)
         porters_status[porter_id]["available_at"] = finish
@@ -272,6 +284,131 @@ def simulate_queue(df: pd.DataFrame, porters_df: pd.DataFrame) -> pd.DataFrame:
     df["prototype_assigned_porter"] = assigned_porter
     df["prototype_sla_outcome"] = sla_outcome
     df["prototype_escalated_for_review"] = escalated
+    df["prototype_missed_or_late"] = df["prototype_sla_outcome"].isin(
+        ["Completed-Late", "Breached", "Unknown-BadTimestamps"]
+    )
+    return df
+
+
+# ---------------------------------------------------------------------------
+# 6. REVIEW 2 MITIGATION: reserved Emergency porter pool.
+#
+# Review 1's error analysis showed the prototype still misses its Emergency
+# SLA target (42.5% vs a 5% target) -- not because of queueing *order*
+# (Emergency already jumps the queue via score_priority), but because with
+# only 8 generalist porters shared across all three urgency tiers, an
+# Emergency call that lands while every porter is mid-transfer on an Urgent
+# or Routine job still has to wait for one to finish. This mirrors a real
+# hospital pattern: a dedicated "crash"/STAT porter held back from routine
+# work for exactly this reason.
+#
+# simulate_queue_with_reserve() tests that mitigation: a subset of porters
+# is reserved for Emergency-tier requests only. To avoid wasting a reserved
+# porter's time when the Emergency queue is quiet (and to avoid blindly
+# starving Emergency if the reserved porter is unlucky and already busy),
+# Emergency requests overflow into the general pool if their reserved-pool
+# wait would exceed `emergency_overflow_wait_min`. Urgent/Routine requests
+# never draw from the reserved pool -- that is the trade-off being measured.
+# ---------------------------------------------------------------------------
+
+def simulate_queue_with_reserve(
+    df: pd.DataFrame,
+    porters_df: pd.DataFrame,
+    reserved_porter_ids=None,
+    emergency_overflow_wait_min: float = 5.0,
+) -> pd.DataFrame:
+    reserved_porter_ids = set(reserved_porter_ids or [])
+
+    df = validate_requests(df)
+    df["timestamp_requested"] = pd.to_datetime(df["timestamp_requested"], errors="coerce")
+    df = df.sort_values("timestamp_requested", kind="stable").reset_index(drop=True)
+
+    porters_status = {
+        row["porter_id"]: {"zone": row["home_zone"], "available_at": pd.Timestamp.min}
+        for _, row in porters_df.iterrows()
+    }
+    # Keep subsets as ORDER-PRESERVING lists, not Python sets. recommend_porter()
+    # breaks ties (equal available_at + equal zone distance) by input order, so
+    # building a subset from an unordered set would silently reshuffle which
+    # porter wins a tie every run -- a reproducibility bug, not a modelling
+    # choice. Preserve the original porter-roster order instead.
+    porter_order = [pid for pid in porters_status.keys()]
+    reserved_ids = [pid for pid in porter_order if pid in reserved_porter_ids]
+    general_ids = [pid for pid in porter_order if pid not in reserved_porter_ids]
+
+    wait_minutes, assigned_porter, sla_outcome, escalated, pool_used = [], [], [], [], []
+
+    for _, row in df.iterrows():
+        arrival = row["timestamp_requested"]
+        if pd.isna(arrival):
+            wait_minutes.append(None)
+            assigned_porter.append(None)
+            sla_outcome.append("Unknown-BadTimestamps")
+            escalated.append(True)
+            pool_used.append(None)
+            continue
+
+        src_zone = ZONE.get(row["resolved_source"])
+        effective_zone = src_zone if src_zone is not None else 3
+        urgency = row["resolved_urgency"]
+        sla = URGENCY_SLA_MIN.get(urgency, 30)
+
+        porter_id = None
+        chosen_pool = "general"
+
+        if urgency == "Emergency" and reserved_ids:
+            r_status = {pid: porters_status[pid] for pid in reserved_ids}
+            r_pid, _ = recommend_porter(effective_zone, r_status)
+            if r_pid is not None:
+                r_wait = (max(arrival, r_status[r_pid]["available_at"]) - arrival).total_seconds() / 60.0
+                if r_wait <= emergency_overflow_wait_min:
+                    porter_id = r_pid
+                    chosen_pool = "reserved"
+
+        if porter_id is None:
+            # Urgent/Routine only ever draw from the general pool. An
+            # Emergency that couldn't be served fast enough by the reserved
+            # pool overflows into the general pool too (a real STAT porter
+            # policy would rather borrow a busy nurse's porter than breach
+            # an Emergency SLA to protect an idle reservation).
+            pool_ids = porter_order if urgency == "Emergency" else general_ids
+            g_status = {pid: porters_status[pid] for pid in pool_ids}
+            porter_id, _ = recommend_porter(effective_zone, g_status)
+            if urgency == "Emergency" and reserved_ids:
+                chosen_pool = "general-overflow"
+
+        if porter_id is None:
+            wait_minutes.append(None)
+            assigned_porter.append(None)
+            sla_outcome.append("Breached")
+            escalated.append(True)
+            pool_used.append(chosen_pool)
+            continue
+
+        info = porters_status[porter_id]
+        start = max(arrival, info["available_at"])
+        wait = (start - arrival).total_seconds() / 60.0
+
+        dist = abs(info["zone"] - effective_zone)
+        service_time = 6 + dist * 2.5
+        finish = start + pd.Timedelta(minutes=service_time)
+        porters_status[porter_id]["available_at"] = finish
+        porters_status[porter_id]["zone"] = ZONE.get(row["resolved_destination"], info["zone"])
+
+        total_elapsed = wait + service_time
+        outcome = "Completed-OnTime" if total_elapsed <= sla else "Completed-Late"
+
+        wait_minutes.append(wait)
+        assigned_porter.append(porter_id)
+        sla_outcome.append(outcome)
+        escalated.append(row["data_confidence"] == "Low" or outcome == "Completed-Late")
+        pool_used.append(chosen_pool)
+
+    df["prototype_wait_minutes"] = wait_minutes
+    df["prototype_assigned_porter"] = assigned_porter
+    df["prototype_sla_outcome"] = sla_outcome
+    df["prototype_escalated_for_review"] = escalated
+    df["prototype_pool_used"] = pool_used
     df["prototype_missed_or_late"] = df["prototype_sla_outcome"].isin(
         ["Completed-Late", "Breached", "Unknown-BadTimestamps"]
     )

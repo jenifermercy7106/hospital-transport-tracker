@@ -1,0 +1,10 @@
+config,urgency,n,avg_wait_min,pct_missed_or_late,pct_escalated,target_pct_missed_or_late,meets_target
+0 reserved (Review 1 prototype),Emergency,87,0.0,0.4367816091954023,0.4942528735632184,0.05,False
+0 reserved (Review 1 prototype),Routine,333,0.0,0.0,0.10510510510510511,0.15,True
+0 reserved (Review 1 prototype),Urgent,242,0.0,0.0,0.10330578512396695,0.1,True
+1 reserved (P03),Emergency,87,0.16781609195402297,0.5057471264367817,0.5287356321839081,0.05,False
+1 reserved (P03),Routine,333,0.0,0.0,0.10510510510510511,0.15,True
+1 reserved (P03),Urgent,242,0.0,0.0,0.10330578512396695,0.1,True
+2 reserved (P03 + P08),Emergency,87,0.0,0.4827586206896552,0.5057471264367817,0.05,False
+2 reserved (P03 + P08),Routine,333,0.0,0.0,0.10510510510510511,0.15,True
+2 reserved (P03 + P08),Urgent,242,0.0,0.0,0.10330578512396695,0.1,True
