@@ -24,9 +24,24 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 
+# --- Tunable constants -----------------------------------------------------
+# These are ILLUSTRATIVE values for the prototype, not clinical standards.
+# Hospital leadership must sign off the SLA minutes before any real use
+# (see Deployment Checklist in the report).
 VALID_URGENCIES = {"Emergency", "Urgent", "Routine"}
+
+# Base priority per tier. Gaps are deliberate: the highest score a Routine
+# request can ever reach is 20 + 40 (aging cap) + 6 (low-confidence) = 66,
+# still BELOW the lowest Emergency score (100), so aging can never invert the
+# safety ordering. Pinned by TestScorePriority.test_aged_routine_cannot_...
 URGENCY_BASE_SCORE = {"Emergency": 100, "Urgent": 60, "Routine": 20}
+
+# Minutes allowed from request to confirmed handover, per tier.
 URGENCY_SLA_MIN = {"Emergency": 10, "Urgent": 30, "Routine": 90}
+
+# Location -> zone (1..5). Zone distance |zoneA - zoneB| is the prototype's
+# stand-in for real walking distance (no indoor positioning available).
+# Service-time model used by the simulations: 6 min + 2.5 min per zone step.
 
 ZONE = {
     "Ward A1 (General Surgery)": 1, "Ward A2 (General Surgery)": 1,
@@ -53,6 +68,29 @@ LOCATION_ALIASES = {
 # ---------------------------------------------------------------------------
 
 def canonicalise_location(raw: str):
+    """
+    Map a free-text location to a canonical hospital location.
+
+    Parameters
+    ----------
+    raw : str | None | NaN
+        Whatever the caller typed or the call log contained.
+
+    Returns
+    -------
+    (location, state) where state is one of:
+      "exact"        -- already canonical; trusted
+      "corrected"    -- matched via alias table or substring; USED but flagged
+                        so staff see it was auto-corrected, never silently trusted
+      "missing"      -- None / NaN / empty string; location is None
+      "unrecognised" -- text present but matches nothing; location is None
+                        (we refuse to guess a clinical location)
+
+    Error boundary: never raises on bad input; every input maps to a state.
+    Known limitation: the substring fallback is permissive (e.g. "ward"
+    matches the first ward in ZONE order). That is why "corrected" always
+    lowers confidence to Medium and is shown to staff for confirmation.
+    """
     if pd.isna(raw) or raw == "":
         return None, "missing"
     raw_stripped = str(raw).strip()
@@ -70,6 +108,18 @@ def canonicalise_location(raw: str):
 
 def validate_requests(df: pd.DataFrame) -> pd.DataFrame:
     """
+    INPUT BOUNDARY of the whole system -- every request passes through here.
+
+    Input : DataFrame with at least source_location, destination_location,
+            urgency, timestamp_requested (extra columns are passed through).
+    Output: a COPY (input is not mutated) with 5 added columns:
+            resolved_source, resolved_destination, resolved_urgency,
+            data_confidence (High/Medium/Low), data_issues (text).
+
+    Confidence rules: High = no issues; Low = a source/destination is
+    missing or unrecognised; Medium = anything else (auto-corrected text,
+    missing urgency, missing timestamp).
+
     Never drops a row. Instead annotates each request with:
       - data_confidence: High / Medium / Low
       - data_issues: human-readable list of what's wrong
@@ -144,6 +194,21 @@ def validate_requests(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def score_priority(urgency: str, waiting_minutes: float, data_confidence: str) -> float:
+    """
+    Rank score for the live queue (higher = shown first).
+
+    score = tier base + aging boost (0.5 pt/min, capped at 40) + visibility boost
+    (High 0 / Medium +3 / Low +6).
+
+    Error boundaries:
+      * unknown urgency string -> scored as "Urgent" (never lower), so a typo
+        can't push a patient down the queue.
+      * aging is capped so an old Routine request can never outrank a new
+        Emergency.
+      * the confidence boost RAISES low-quality requests so staff look at
+        them; it never hides them.
+    Pure function: no side effects.
+    """
     base = URGENCY_BASE_SCORE.get(urgency, URGENCY_BASE_SCORE["Urgent"])
     aging_boost = min(waiting_minutes * 0.5, 40)     # capped aging boost
     # Low-confidence requests are surfaced, not hidden -- they get a small
@@ -163,6 +228,16 @@ def recommend_porter(source_zone, porters_status: dict):
     Returns (porter_id, eta_rank_reason) or (None, reason) if none available.
     This never assigns -- app.py's confirm_assignment() does that, and only
     when a staff member clicks Confirm.
+
+    Ranking: earliest `available_at` first, then smallest zone distance.
+    Ties on both keep the roster's input order (Python's sort is stable), so
+    callers must pass porters in a deterministic order -- see the Review 2
+    determinism fix in simulate_queue_with_reserve().
+
+    Error boundaries (return (None, reason) instead of raising or guessing):
+      * empty roster               -> "No porter roster loaded"
+      * source_zone is None        -> "Cannot recommend ... unresolved"
+    Read-only: does not modify porters_status (pinned by a unit test).
     """
     if not porters_status:
         return None, "No porter roster loaded"
@@ -188,6 +263,13 @@ def detect_sla_state(ts_requested, ts_handover_confirmed, ts_arrived_source, sla
     Handles the failure case where handover_confirmed < arrived_source
     (manual entry clock skew) by flagging it instead of computing a
     negative duration.
+
+    Open (not yet handed over) requests are classified against `now`:
+      elapsed > SLA            -> Breached
+      elapsed > 70% of SLA     -> At-Risk   (early warning before breach)
+      otherwise                -> On-Track
+    `now=None` means historical replay: open rows simply report "Open".
+    Boundary: elapsed == SLA exactly still counts as on time (<=).
     """
     if pd.isna(ts_requested):
         return "Unknown-BadTimestamps"

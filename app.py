@@ -40,6 +40,15 @@ STAFF_ROLES = ["Staff Nurse", "Ward Sister", "OT Coordinator", "Duty Doctor", "C
 # ---------------------------------------------------------------------------
 
 def load_data():
+    """
+    Load requests -> run them through validate_requests() (the input error
+    boundary: nothing reaches the UI without a confidence flag) -> add the two
+    live-state columns the UI mutates:
+      live_status           "Open" | "Handover Confirmed" | "Cancelled"
+      assigned_porter_live  porter_id chosen by STAFF ("" = not yet assigned)
+    State lives in st.session_state only (in-memory, per browser session, lost
+    on refresh) -- see docs/API_AND_SCHEMA.md for the planned DB-backed design.
+    """
     df = pd.read_csv(DATA_PATH)
     df = validate_requests(df)
     df["timestamp_requested"] = pd.to_datetime(df["timestamp_requested"], errors="coerce")
@@ -63,6 +72,12 @@ if "new_req_counter" not in st.session_state:
 
 
 def log_action(staff_name, staff_role, action, request_id, detail=""):
+    """
+    Append-only audit record. Called by EVERY state-changing button handler
+    below -- this is how "staff retained final control" is provable.
+    Uses the REAL wall-clock time (not the demo clock) on purpose: an audit
+    trail must record when the click actually happened.
+    """
     st.session_state.action_log.append({
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "staff_name": staff_name,
@@ -172,6 +187,10 @@ porters_status = {
 busy_porters = set(open_df.loc[open_df["assigned_porter_live"] != "", "assigned_porter_live"])
 
 def recommend_row(row):
+    """READ-ONLY suggestion per open request; writes nothing to session state.
+    Porters already holding an unconfirmed assignment are excluded as busy.
+    Returns (None, reason) when the source is unresolved -> UI shows
+    "none available" and staff must choose manually."""
     if row["assigned_porter_live"]:
         return row["assigned_porter_live"], "Already assigned"
     src_zone = ZONE.get(row["resolved_source"])
@@ -250,17 +269,27 @@ else:
                         ),
                         key=f"assign_{rid}",
                     )
+                    # FINAL ACTION 1 -- only a staff click assigns a porter.
                     if st.button("✅ Confirm assignment", key=f"btn_assign_{rid}"):
-                        idx = st.session_state.requests["request_id"] == rid
-                        st.session_state.requests.loc[idx, "assigned_porter_live"] = override_porter
-                        is_override = override_porter != row["recommended_porter"] and override_porter != ""
-                        log_action(
-                            staff_name, staff_role,
-                            "Overrode recommendation" if is_override else "Confirmed assignment",
-                            rid, f"porter={override_porter} (recommended={row['recommended_porter']})",
-                        )
-                        st.rerun()
+                        if override_porter == "":
+                            # Error boundary (added after Review 2 code audit): a blank
+                            # selection used to be accepted and logged as a "confirmed
+                            # assignment". Refuse it instead of recording a false action.
+                            st.warning(f"{rid}: choose a porter before confirming "
+                                       "(no porter is available/suggested for this request).")
+                        else:
+                            idx = st.session_state.requests["request_id"] == rid
+                            st.session_state.requests.loc[idx, "assigned_porter_live"] = override_porter
+                            is_override = override_porter != row["recommended_porter"]
+                            log_action(
+                                staff_name, staff_role,
+                                "Overrode recommendation" if is_override else "Confirmed assignment",
+                                rid, f"porter={override_porter} (recommended={row['recommended_porter']})",
+                            )
+                            st.rerun()
                 else:
+                    # FINAL ACTION 2 -- a transfer is "complete" only when staff say so;
+                    # the system never infers completion from elapsed time.
                     if st.button("🤝 Confirm handover", key=f"btn_handover_{rid}"):
                         idx = st.session_state.requests["request_id"] == rid
                         st.session_state.requests.loc[idx, "live_status"] = "Handover Confirmed"
@@ -269,12 +298,14 @@ else:
                         log_action(staff_name, staff_role, "Confirmed handover", rid,
                                    f"porter={row['assigned_porter_live']}")
                         st.rerun()
+                    # FINAL ACTION 3 -- release a stuck assignment back to the queue.
                     if st.button("🔁 Reassign / escalate", key=f"btn_reassign_{rid}"):
                         idx = st.session_state.requests["request_id"] == rid
                         st.session_state.requests.loc[idx, "assigned_porter_live"] = ""
                         log_action(staff_name, staff_role, "Escalated / released porter", rid,
                                    "Returned to queue for reassignment")
                         st.rerun()
+                # FINAL ACTION 4 -- cancel (duplicate / erroneous call). Logged like the rest.
                 if st.button("🚫 Cancel request", key=f"btn_cancel_{rid}"):
                     idx = st.session_state.requests["request_id"] == rid
                     st.session_state.requests.loc[idx, "live_status"] = "Cancelled"

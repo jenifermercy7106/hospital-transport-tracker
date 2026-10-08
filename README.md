@@ -41,6 +41,28 @@ report is a short changelog of everything added since Review 1.
   report figures with no script to reproduce them. Added for full
   pipeline reproducibility.
 
+## Technical documentation (Review 2 follow-up)
+
+| Doc | What's in it |
+|---|---|
+| [`docs/TESTING.md`](docs/TESTING.md) | 3-layer test strategy, test-by-test map of what each unit test protects, mutation-check results, honest coverage gaps |
+| [`docs/ERROR_BOUNDARIES.md`](docs/ERROR_BOUNDARIES.md) | every point where bad input/failure is caught, what staff see, which test covers it, residual risks, manual click-through checklist |
+| [`docs/API_AND_SCHEMA.md`](docs/API_AND_SCHEMA.md) | engine function API, CSV schemas, and a **planned** REST API + DB schema |
+| [`docs/schema.sql`](docs/schema.sql) | planned SQL schema (validated in SQLite; DB-enforced append-only audit log) |
+
+**API / database status, plainly:** the prototype currently has *no HTTP
+endpoints and no database* — it is a Streamlit app over CSV files. The REST
+endpoints and SQL schema are a validated design for the persistence phase,
+not running code.
+
+### Quick test commands
+
+```bash
+python -m unittest discover -s tests -v     # 42 unit tests (stdlib only)
+cd scripts && python edge_cases.py          # 8 scenario cases / 14 checks
+python scripts/live_runthrough.py           # end-to-end staff workflow
+```
+
 ## Project layout
 
 ```
@@ -48,6 +70,12 @@ data/
   transport_requests.csv   synthetic dataset: 662 requests over 1 week
   porters.csv               8-porter roster with shifts/home zones
   locations.csv              hospital location -> zone map
+
+tests/
+  test_engine.py            42 unit tests, stdlib unittest (one class per engine function)
+
+docs/
+  TESTING.md  ERROR_BOUNDARIES.md  API_AND_SCHEMA.md  schema.sql
 
 scripts/
   data_generator.py         builds the synthetic dataset (re-runnable, seeded)
@@ -90,7 +118,10 @@ python3 scripts/data_generator.py
 python3 scripts/baseline.py
 python3 scripts/prototype_engine.py
 
-# 3. Run the automated edge-case tests (8 cases, 14 assertions)
+# 3a. Unit tests (42)
+python -m unittest discover -s tests
+
+# 3b. Run the automated edge-case tests (8 cases, 14 assertions)
 cd scripts && python3 edge_cases.py && cd ..
 
 # 4. Run the measurable experiment (baseline vs prototype vs target)

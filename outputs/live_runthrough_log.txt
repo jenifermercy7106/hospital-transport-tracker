@@ -32,9 +32,9 @@ Exercising the exact engine calls app.py's UI buttons invoke.
 
 [Step 6] Staff action log (audit trail) for this session:
           timestamp staff_name  staff_role                  action request_id                                detail
-2026-10-05 04:45:01   A. Kumar Ward Sister      Logged new request   LIVE0001 ward a1 -> ICU, urgency=(unspecified)
-2026-10-05 04:45:01   A. Kumar Ward Sister Overrode recommendation   LIVE0001          porter=P03 (recommended=P01)
-2026-10-05 04:45:01   A. Kumar Ward Sister      Confirmed handover   LIVE0001                            porter=P03
+2026-10-08 08:11:41   A. Kumar Ward Sister      Logged new request   LIVE0001 ward a1 -> ICU, urgency=(unspecified)
+2026-10-08 08:11:41   A. Kumar Ward Sister Overrode recommendation   LIVE0001          porter=P03 (recommended=P01)
+2026-10-08 08:11:41   A. Kumar Ward Sister      Confirmed handover   LIVE0001                            porter=P03
 
 ==============================================================================
 RESULT: every write to request LIVE0001's state (assignment, handover)
